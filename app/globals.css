@@ -1,0 +1,59 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --black: #08090c;
+  --surface: #101114;
+  --card: #17181e;
+  --gold: #ffc01c;
+  --gold-d: rgba(255, 192, 28, 0.1);
+  --gold-m: rgba(255, 192, 28, 0.26);
+  --text: #ece9df;
+  --muted: rgba(236, 233, 223, 0.45);
+  --green: #28c98a;
+  --blue: #4b8fe4;
+  --amber: #f59e0b;
+  --red: #e05555;
+  --font-heading: "Google Sans", "Nunito Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-body: "DM Sans", ui-sans-serif, system-ui, sans-serif;
+  --background: var(--black);
+  --foreground: var(--text);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  color: var(--foreground);
+  background: var(--background);
+  font-family: var(--font-body);
+  min-height: 100vh;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+::selection {
+  background: var(--gold-m);
+  color: var(--text);
+}
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+
+  .scrollbar-none {
+    scrollbar-width: none;
+  }
+
+  .scrollbar-none::-webkit-scrollbar {
+    display: none;
+  }
+}
