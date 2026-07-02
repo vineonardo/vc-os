@@ -111,7 +111,7 @@ function FounderLinks() {
 function DemoBanner() {
   return (
     <div className="fixed left-1/2 top-2 z-30 -translate-x-1/2 border border-amber/30 bg-amber/10 px-3 py-2 text-xs text-amber">
-      Demo mode: add Supabase anon and service keys to persist data.
+      Live Wolf demo: X-Storm persistence is offline, so this session is not saved.
     </div>
   );
 }

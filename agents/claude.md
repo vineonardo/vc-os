@@ -13,5 +13,6 @@ Key env:
 - Existing `.env.local` contains `OPENAI_API_KEY`; reuse it.
 - Supabase public URL is `https://vawoypfirghfvlktnuub.supabase.co`.
 - Required deployment vars: `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, Razorpay keys, `DEVANG_EMAIL`.
+- If X-Storm's public API hostname returns NXDOMAIN, set `X_STORM_SUPABASE_DISABLED=true` so `/chat` can still run with real OpenAI while persistence is offline.
 
 Do not expose secret values in logs or comments.

@@ -7,6 +7,7 @@ export const appConfig = {
   openAiKey: process.env.OPENAI_API_KEY || "",
   openAiModel: process.env.OPENAI_MODEL || "gpt-4o",
   demoFallback: process.env.X_STORM_DEMO_FALLBACK === "true",
+  supabaseDisabled: process.env.X_STORM_SUPABASE_DISABLED === "true",
   razorpayKeyId: process.env.RAZORPAY_KEY_ID || "",
   razorpayKeySecret: process.env.RAZORPAY_KEY_SECRET || "",
   publicRazorpayKeyId:
@@ -19,9 +20,9 @@ export const appConfig = {
 };
 
 export function hasSupabaseEnv() {
-  return Boolean(appConfig.supabaseUrl && appConfig.supabaseAnonKey);
+  return Boolean(!appConfig.supabaseDisabled && appConfig.supabaseUrl && appConfig.supabaseAnonKey);
 }
 
 export function hasSupabaseAdminEnv() {
-  return Boolean(appConfig.supabaseUrl && appConfig.supabaseServiceRoleKey);
+  return Boolean(!appConfig.supabaseDisabled && appConfig.supabaseUrl && appConfig.supabaseServiceRoleKey);
 }

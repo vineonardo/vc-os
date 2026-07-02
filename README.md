@@ -35,6 +35,7 @@ Schema files:
 NEXT_PUBLIC_SUPABASE_URL=https://vawoypfirghfvlktnuub.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=
 SUPABASE_SERVICE_ROLE_KEY=
+X_STORM_SUPABASE_DISABLED=false
 
 RAZORPAY_KEY_ID=
 RAZORPAY_KEY_SECRET=
@@ -48,3 +49,4 @@ CREDIT_PRICE_PAISE=1000
 ```
 
 Set `X_STORM_DEMO_FALLBACK=true` only when you want local chat to stream a synthetic Wolf reply instead of calling OpenAI.
+Set `X_STORM_SUPABASE_DISABLED=true` only when the X-Storm Supabase API hostname is unavailable and `/chat` must stay testable without persistence.
