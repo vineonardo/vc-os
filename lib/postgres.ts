@@ -58,8 +58,22 @@ export async function ensurePgSchema() {
           created_at timestamptz not null default now()
         );
 
+        create table if not exists vc_os.demo_credit_events (
+          id uuid primary key,
+          session_id text not null references vc_os.demo_sessions(session_id) on delete cascade,
+          amount integer not null,
+          type text not null check (type in ('grant', 'purchase', 'deduct')),
+          reason text not null,
+          reference_id text,
+          balance_after integer not null check (balance_after >= 0),
+          created_at timestamptz not null default now()
+        );
+
         create index if not exists demo_assets_session_created_idx
           on vc_os.demo_assets(session_id, created_at desc);
+
+        create index if not exists demo_credit_events_session_created_idx
+          on vc_os.demo_credit_events(session_id, created_at desc);
       `)
       .then(() => undefined);
   }

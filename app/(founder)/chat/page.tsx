@@ -30,7 +30,6 @@ export default async function ChatPage() {
 
     return (
       <ChatWindow
-        userId="demo"
         conversationId={demoSession.conversationId}
         initialMessages={demoSession.messages.length ? demoSession.messages : [initialMessage]}
         initialCredits={demoSession.credits}
@@ -84,7 +83,6 @@ export default async function ChatPage() {
     <>
       <FounderLinks />
       <ChatWindow
-        userId={user.id}
         conversationId={conversation.id}
         initialMessages={messages.length ? messages : [initialMessage]}
         initialCredits={balance}

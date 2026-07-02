@@ -2,11 +2,12 @@ import Link from "next/link";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { logoutAction } from "@/app/(auth)/actions";
+import { DemoCreditPurchase } from "@/components/credits/DemoCreditPurchase";
 import { CreditPurchase } from "@/components/credits/CreditPurchase";
 import { appConfig, hasSupabaseAdminEnv, hasSupabaseEnv } from "@/lib/config";
 import { getBalance } from "@/lib/credits";
 import { DEMO_SESSION_COOKIE } from "@/lib/demo-cookie";
-import { loadDemoSession } from "@/lib/demo-store";
+import { loadDemoCreditActivity, loadDemoSession } from "@/lib/demo-store";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { formatDate } from "@/lib/utils";
@@ -17,6 +18,7 @@ export const dynamic = "force-dynamic";
 export default async function CreditsPage() {
   let balance = 10;
   let transactions: CreditTransaction[] = [];
+  let isDemo = false;
 
   if (hasSupabaseEnv() && hasSupabaseAdminEnv()) {
     const supabase = createClient();
@@ -36,9 +38,11 @@ export default async function CreditsPage() {
     if (error) throw error;
     transactions = (data || []) as CreditTransaction[];
   } else {
+    isDemo = true;
     const demoSessionId = cookies().get(DEMO_SESSION_COOKIE)?.value || "shared-demo";
     const demoSession = await loadDemoSession(demoSessionId);
     balance = demoSession.credits;
+    transactions = await loadDemoCreditActivity(demoSessionId);
   }
 
   return (
@@ -52,9 +56,11 @@ export default async function CreditsPage() {
             <Link href="/assets" className="border border-white/10 px-3 py-2 text-muted hover:text-text">
               Assets
             </Link>
-            <form action={logoutAction}>
-              <button className="border border-white/10 px-3 py-2 text-muted hover:text-text">Logout</button>
-            </form>
+            {!isDemo && (
+              <form action={logoutAction}>
+                <button className="border border-white/10 px-3 py-2 text-muted hover:text-text">Logout</button>
+              </form>
+            )}
           </div>
         </div>
 
@@ -92,10 +98,14 @@ export default async function CreditsPage() {
           </section>
 
           <aside>
-            <CreditPurchase
-              minCredits={appConfig.minCreditPurchase}
-              creditPricePaise={appConfig.creditPricePaise}
-            />
+            {isDemo ? (
+              <DemoCreditPurchase />
+            ) : (
+              <CreditPurchase
+                minCredits={appConfig.minCreditPurchase}
+                creditPricePaise={appConfig.creditPricePaise}
+              />
+            )}
           </aside>
         </div>
       </div>

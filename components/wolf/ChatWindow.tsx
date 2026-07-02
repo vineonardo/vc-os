@@ -1,10 +1,10 @@
 "use client";
 
 import { ArrowUp, FileSpreadsheet, FileText, Presentation } from "lucide-react";
+import Link from "next/link";
 import { FormEvent, useMemo, useRef, useState } from "react";
 import { CREDIT_COSTS } from "@/lib/constants";
 import type { ChatMessage } from "@/types";
-import { CreditBadge } from "@/components/wolf/CreditBadge";
 import { MessageBubble } from "@/components/wolf/Message";
 import { TypingIndicator } from "@/components/wolf/TypingIndicator";
 
@@ -36,12 +36,10 @@ const toolChips = [
 ];
 
 export function ChatWindow({
-  userId,
   conversationId,
   initialMessages,
   initialCredits,
 }: {
-  userId: string;
   conversationId: string | null;
   initialMessages: ChatMessage[];
   initialCredits: number;
@@ -175,7 +173,14 @@ export function ChatWindow({
               <div className="text-xs text-muted">Private founder screening assistant</div>
             </div>
           </div>
-          <CreditBadge userId={userId} initialBalance={credits} />
+          <nav className="flex items-center gap-2 text-sm">
+            <Link className="border border-white/10 px-3 py-2 text-muted hover:text-text" href="/assets">
+              Assets
+            </Link>
+            <Link className="border border-white/10 px-3 py-2 text-muted hover:text-text" href="/credits">
+              Credits
+            </Link>
+          </nav>
         </div>
       </header>
 
@@ -197,8 +202,9 @@ export function ChatWindow({
               <button
                 key={tool.label}
                 type="button"
+                disabled={credits < tool.cost}
                 onClick={() => generateAsset(tool.href, tool.label)}
-                className="flex items-center justify-between border border-gold/20 bg-card px-4 py-3 text-left text-sm transition hover:border-gold/60"
+                className="flex items-center justify-between border border-gold/20 bg-card px-4 py-3 text-left text-sm transition hover:border-gold/60 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 <span className="flex items-center gap-2">
                   <tool.icon className="h-4 w-4 text-gold" />

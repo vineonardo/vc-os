@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 import { CREDIT_COSTS } from "@/lib/constants";
 import { appConfig, hasSupabaseAdminEnv, hasSupabaseEnv } from "@/lib/config";
 import { deductCredits, getBalance } from "@/lib/credits";
+import { stripCreditBalanceCopy } from "@/lib/credit-copy";
 import { DEMO_SESSION_COOKIE } from "@/lib/demo-cookie";
 import { appendDemoExchange, loadDemoSession } from "@/lib/demo-store";
 import { createOpenAI, getOpenAIModel } from "@/lib/openai";
@@ -112,7 +113,10 @@ export async function POST(request: NextRequest) {
       message,
       history: demoSession.messages
         .slice(-20)
-        .map((row) => ({ role: row.role as "user" | "assistant", content: row.content })),
+        .map((row) => ({
+          role: row.role as "user" | "assistant",
+          content: stripCreditBalanceCopy(row.content),
+        })),
       persist: async (assistantContent) => {
         const next = await appendDemoExchange(demoSessionId, message, assistantContent);
         return next.credits;
@@ -172,7 +176,10 @@ export async function POST(request: NextRequest) {
 
   const history = (historyRows || [])
     .reverse()
-    .map((row) => ({ role: row.role as "user" | "assistant", content: row.content }));
+    .map((row) => ({
+      role: row.role as "user" | "assistant",
+      content: stripCreditBalanceCopy(row.content),
+    }));
 
   const stream = await streamWolfResponse({
     userId: user.id,

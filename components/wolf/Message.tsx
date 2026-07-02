@@ -1,9 +1,11 @@
 import { Bot, User } from "lucide-react";
 import type { ChatMessage } from "@/types";
+import { stripCreditBalanceCopy } from "@/lib/credit-copy";
 import { cn } from "@/lib/utils";
 
 export function MessageBubble({ message }: { message: ChatMessage }) {
   const isUser = message.role === "user";
+  const content = isUser ? message.content : stripCreditBalanceCopy(message.content);
 
   return (
     <div className={cn("flex gap-3", isUser ? "justify-end" : "justify-start")}>
@@ -20,12 +22,7 @@ export function MessageBubble({ message }: { message: ChatMessage }) {
             : "border-white/10 bg-card text-text",
         )}
       >
-        <p className="whitespace-pre-wrap">{message.content}</p>
-        {!isUser && message.credits_used > 0 && (
-          <div className="mt-2 text-xs text-muted">
-            {message.credits_used} {message.credits_used === 1 ? "credit" : "credits"} used
-          </div>
-        )}
+        <p className="whitespace-pre-wrap">{content}</p>
       </div>
       {isUser && (
         <div className="grid h-9 w-9 shrink-0 place-items-center border border-white/10 bg-surface text-muted">

@@ -1,9 +1,13 @@
 import { get, put } from "@vercel/blob";
+import type { PoolClient } from "pg";
 import { CREDIT_COSTS } from "@/lib/constants";
+import { stripCreditBalanceCopy } from "@/lib/credit-copy";
 import { normalizeDemoSessionId } from "@/lib/demo-cookie";
 import { hasDatabaseEnv } from "@/lib/config";
 import { withPg } from "@/lib/postgres";
-import type { Asset, AssetType, ChatMessage } from "@/types";
+import type { Asset, AssetType, ChatMessage, CreditTransaction, CreditTransactionType } from "@/types";
+
+const DEMO_STARTING_CREDITS = 250;
 
 export type DemoSessionState = {
   sessionId: string;
@@ -12,6 +16,10 @@ export type DemoSessionState = {
   messages: ChatMessage[];
   assets: Asset[];
   updatedAt: string;
+};
+
+export type DemoCreditActivity = CreditTransaction & {
+  balance_after?: number;
 };
 
 function hasBlobStore() {
@@ -31,7 +39,7 @@ function defaultSession(sessionId: string): DemoSessionState {
   return {
     sessionId: safeSessionId,
     conversationId: `demo-${safeSessionId}`,
-    credits: 250,
+    credits: DEMO_STARTING_CREDITS,
     messages: [],
     assets: [],
     updatedAt: new Date().toISOString(),
@@ -46,6 +54,43 @@ function assetLabel(type: AssetType) {
       : "pitch-deck";
 }
 
+function assetReason(type: AssetType) {
+  return type === "financial_model"
+    ? "Financial model"
+    : type === "investor_memo"
+      ? "Investor memo"
+      : "Pitch deck";
+}
+
+async function insertCreditEvent(
+  client: PoolClient,
+  {
+    sessionId,
+    amount,
+    type,
+    reason,
+    referenceId,
+    balanceAfter,
+  }: {
+    sessionId: string;
+    amount: number;
+    type: CreditTransactionType;
+    reason: string;
+    referenceId?: string | null;
+    balanceAfter: number;
+  },
+) {
+  await client.query(
+    `
+      insert into vc_os.demo_credit_events (
+        id, session_id, amount, type, reason, reference_id, balance_after, created_at
+      )
+      values ($1::uuid, $2, $3, $4, $5, $6, $7, now())
+    `,
+    [crypto.randomUUID(), sessionId, amount, type, reason, referenceId || null, balanceAfter],
+  );
+}
+
 function coerceMessages(value: unknown): ChatMessage[] {
   if (!Array.isArray(value)) return [];
   return value
@@ -55,7 +100,10 @@ function coerceMessages(value: unknown): ChatMessage[] {
     .map((item) => ({
       id: typeof item.id === "string" ? item.id : crypto.randomUUID(),
       role: item.role as "user" | "assistant",
-      content: typeof item.content === "string" ? item.content : "",
+      content:
+        typeof item.content === "string"
+          ? stripCreditBalanceCopy(item.content)
+          : "",
       credits_used: typeof item.credits_used === "number" ? item.credits_used : 0,
       created_at: typeof item.created_at === "string" ? item.created_at : new Date().toISOString(),
     }));
@@ -93,14 +141,25 @@ async function readSession(sessionId: string): Promise<DemoSessionState | null> 
 async function readPostgresSession(sessionId: string): Promise<DemoSessionState> {
   const safeSessionId = normalizeDemoSessionId(sessionId);
   return withPg(async (client) => {
-    await client.query(
+    const created = await client.query<{ session_id: string }>(
       `
         insert into vc_os.demo_sessions (session_id, conversation_id, credits)
         values ($1, $2, $3)
         on conflict (session_id) do nothing
+        returning session_id
       `,
-      [safeSessionId, `demo-${safeSessionId}`, 250],
+      [safeSessionId, `demo-${safeSessionId}`, DEMO_STARTING_CREDITS],
     );
+
+    if (created.rowCount) {
+      await insertCreditEvent(client, {
+        sessionId: safeSessionId,
+        amount: DEMO_STARTING_CREDITS,
+        type: "grant",
+        reason: "Demo starting credits",
+        balanceAfter: DEMO_STARTING_CREDITS,
+      });
+    }
 
     const sessionResult = await client.query<{
       session_id: string;
@@ -160,6 +219,98 @@ async function readPostgresSession(sessionId: string): Promise<DemoSessionState>
 
 export async function loadDemoSession(sessionId: string) {
   return (await readSession(sessionId)) || defaultSession(sessionId);
+}
+
+function derivedCreditActivity(session: DemoSessionState): DemoCreditActivity[] {
+  const activities: DemoCreditActivity[] = [
+    {
+      id: `grant-${session.sessionId}`,
+      user_id: `demo-${session.sessionId}`,
+      amount: DEMO_STARTING_CREDITS,
+      type: "grant",
+      reason: "Demo starting credits",
+      reference_id: null,
+      created_at: session.updatedAt,
+    },
+  ];
+
+  for (const message of session.messages) {
+    if (message.role !== "assistant" || message.credits_used <= 0) continue;
+    activities.push({
+      id: `message-${message.id}`,
+      user_id: `demo-${session.sessionId}`,
+      amount: -message.credits_used,
+      type: "deduct",
+      reason: "Wolf chat reply",
+      reference_id: message.id,
+      created_at: message.created_at,
+    });
+  }
+
+  for (const asset of session.assets) {
+    if (asset.credits_used <= 0) continue;
+    activities.push({
+      id: `asset-${asset.id}`,
+      user_id: `demo-${session.sessionId}`,
+      amount: -asset.credits_used,
+      type: "deduct",
+      reason: assetReason(asset.type),
+      reference_id: asset.id,
+      created_at: asset.created_at,
+    });
+  }
+
+  return activities.sort(
+    (left, right) => new Date(right.created_at).getTime() - new Date(left.created_at).getTime(),
+  );
+}
+
+export async function loadDemoCreditActivity(sessionId: string): Promise<DemoCreditActivity[]> {
+  const session = await loadDemoSession(sessionId);
+
+  if (!hasDatabaseEnv()) return derivedCreditActivity(session);
+
+  const databaseEvents = await withPg(async (client) => {
+    const result = await client.query<{
+      id: string;
+      amount: number;
+      type: CreditTransactionType;
+      reason: string;
+      reference_id: string | null;
+      balance_after: number;
+      created_at: Date;
+    }>(
+      `
+        select id, amount, type, reason, reference_id, balance_after, created_at
+        from vc_os.demo_credit_events
+        where session_id = $1
+        order by created_at desc
+        limit 50
+      `,
+      [session.sessionId],
+    );
+
+    return result.rows.map((row) => ({
+      id: row.id,
+      user_id: `demo-${session.sessionId}`,
+      amount: row.amount,
+      type: row.type,
+      reason: row.reason,
+      reference_id: row.reference_id,
+      balance_after: row.balance_after,
+      created_at: row.created_at.toISOString(),
+    }));
+  });
+
+  const knownReferences = new Set(databaseEvents.map((event) => event.reference_id).filter(Boolean));
+  const derived = derivedCreditActivity(session).filter((event) => {
+    if (event.type === "grant") return !databaseEvents.some((row) => row.type === "grant");
+    return event.reference_id ? !knownReferences.has(event.reference_id) : true;
+  });
+
+  return [...databaseEvents, ...derived]
+    .sort((left, right) => new Date(right.created_at).getTime() - new Date(left.created_at).getTime())
+    .slice(0, 50);
 }
 
 export async function saveDemoSession(session: DemoSessionState) {
@@ -228,6 +379,39 @@ export async function appendDemoExchange(
     credits: Math.max(0, session.credits - CREDIT_COSTS.CHAT_MESSAGE),
     messages: [...session.messages, userMessage, assistantMessage].slice(-80),
   };
+
+  if (hasDatabaseEnv()) {
+    await withPg(async (client) => {
+      await client.query("begin");
+      try {
+        await client.query(
+          `
+            insert into vc_os.demo_sessions (session_id, conversation_id, credits, messages, updated_at)
+            values ($1, $2, $3, $4::jsonb, now())
+            on conflict (session_id) do update set
+              conversation_id = excluded.conversation_id,
+              credits = excluded.credits,
+              messages = excluded.messages,
+              updated_at = now()
+          `,
+          [next.sessionId, next.conversationId, next.credits, JSON.stringify(next.messages)],
+        );
+        await insertCreditEvent(client, {
+          sessionId: next.sessionId,
+          amount: -CREDIT_COSTS.CHAT_MESSAGE,
+          type: "deduct",
+          reason: "Wolf chat reply",
+          referenceId: assistantMessage.id,
+          balanceAfter: next.credits,
+        });
+        await client.query("commit");
+      } catch (error) {
+        await client.query("rollback");
+        throw error;
+      }
+    });
+    return next;
+  }
 
   return saveDemoSession(next);
 }
@@ -323,6 +507,14 @@ export async function saveDemoAsset({
             buffer,
           ],
         );
+        await insertCreditEvent(client, {
+          sessionId: next.sessionId,
+          amount: -creditsUsed,
+          type: "deduct",
+          reason: assetReason(type),
+          referenceId: assetId,
+          balanceAfter: next.credits,
+        });
         await client.query("commit");
       } catch (error) {
         await client.query("rollback");
@@ -334,6 +526,52 @@ export async function saveDemoAsset({
   }
 
   return { asset, credits: next.credits, downloadUrl };
+}
+
+export async function addDemoCredits(sessionId: string, amount: number) {
+  const credits = Math.floor(Number(amount || 0));
+  if (!Number.isFinite(credits) || credits <= 0) throw new Error("Credits must be greater than zero.");
+  if (credits > 5000) throw new Error("Credit top-up is too large.");
+
+  const session = await loadDemoSession(sessionId);
+  const next: DemoSessionState = {
+    ...session,
+    credits: session.credits + credits,
+    updatedAt: new Date().toISOString(),
+  };
+
+  if (hasDatabaseEnv()) {
+    await withPg(async (client) => {
+      await client.query("begin");
+      try {
+        await client.query(
+          `
+            insert into vc_os.demo_sessions (session_id, conversation_id, credits, messages, updated_at)
+            values ($1, $2, $3, $4::jsonb, now())
+            on conflict (session_id) do update set
+              credits = excluded.credits,
+              messages = excluded.messages,
+              updated_at = now()
+          `,
+          [next.sessionId, next.conversationId, next.credits, JSON.stringify(next.messages)],
+        );
+        await insertCreditEvent(client, {
+          sessionId: next.sessionId,
+          amount: credits,
+          type: "purchase",
+          reason: "Demo credit purchase",
+          balanceAfter: next.credits,
+        });
+        await client.query("commit");
+      } catch (error) {
+        await client.query("rollback");
+        throw error;
+      }
+    });
+    return next;
+  }
+
+  return saveDemoSession(next);
 }
 
 export async function getDemoAssetFile(assetId: string) {
