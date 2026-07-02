@@ -1,7 +1,8 @@
 import { redirect } from "next/navigation";
 import { logoutAction } from "@/app/(auth)/actions";
 import { ScorePill } from "@/components/dashboard/ScorePill";
-import { appConfig, hasSupabaseAdminEnv, hasSupabaseEnv } from "@/lib/config";
+import { appConfig, hasDatabaseEnv, hasSupabaseAdminEnv, hasSupabaseEnv } from "@/lib/config";
+import { withPg } from "@/lib/postgres";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { formatDate } from "@/lib/utils";
@@ -39,7 +40,55 @@ const demoRows: FounderPipelineRow[] = [
 export default async function DashboardPage() {
   let rows = demoRows;
 
-  if (hasSupabaseEnv() && hasSupabaseAdminEnv()) {
+  if (hasDatabaseEnv()) {
+    rows = await withPg(async (client) => {
+      const result = await client.query<{
+        session_id: string;
+        messages: unknown[];
+        credits: number;
+        updated_at: Date;
+        assets_ready: string;
+      }>(`
+        select
+          s.session_id,
+          s.messages,
+          s.credits,
+          s.updated_at,
+          count(a.id) filter (where a.status = 'ready') as assets_ready
+        from vc_os.demo_sessions s
+        left join vc_os.demo_assets a on a.session_id = s.session_id
+        group by s.session_id, s.messages, s.credits, s.updated_at
+        order by s.updated_at desc
+        limit 50
+      `);
+
+      return result.rows.map((row, index) => {
+        const messages = Array.isArray(row.messages) ? row.messages : [];
+        const userMessages = messages.filter(
+          (message) =>
+            message &&
+            typeof message === "object" &&
+            (message as { role?: string }).role === "user",
+        );
+        const latest = userMessages.at(-1) as { content?: string } | undefined;
+        const first = userMessages[0] as { content?: string } | undefined;
+        const score = Math.min(92, Math.max(48, 52 + userMessages.length * 8 + Number(row.assets_ready) * 6));
+
+        return {
+          id: row.session_id,
+          email: `session-${index + 1}@venturewolf.demo`,
+          full_name: first?.content ? first.content.slice(0, 42) : `Founder session ${index + 1}`,
+          company_name: latest?.content ? latest.content.slice(0, 44) : "Screening in progress",
+          sector: "Captured by Wolf",
+          stage: `${Math.max(0, 250 - row.credits)} credits used`,
+          score,
+          label: score >= 80 ? "Most Promising" : score >= 60 ? "High Potential" : "Needs Mentorship",
+          assets_ready: Number(row.assets_ready),
+          last_activity: row.updated_at.toISOString(),
+        } satisfies FounderPipelineRow;
+      });
+    });
+  } else if (hasSupabaseEnv() && hasSupabaseAdminEnv()) {
     const supabase = createClient();
     const {
       data: { user },

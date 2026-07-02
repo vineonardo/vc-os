@@ -1,6 +1,8 @@
 import { get, put } from "@vercel/blob";
 import { CREDIT_COSTS } from "@/lib/constants";
 import { normalizeDemoSessionId } from "@/lib/demo-cookie";
+import { hasDatabaseEnv } from "@/lib/config";
+import { withPg } from "@/lib/postgres";
 import type { Asset, AssetType, ChatMessage } from "@/types";
 
 export type DemoSessionState = {
@@ -36,6 +38,14 @@ function defaultSession(sessionId: string): DemoSessionState {
   };
 }
 
+function assetLabel(type: AssetType) {
+  return type === "financial_model"
+    ? "financial-model"
+    : type === "investor_memo"
+      ? "investor-memo"
+      : "pitch-deck";
+}
+
 function coerceMessages(value: unknown): ChatMessage[] {
   if (!Array.isArray(value)) return [];
   return value
@@ -57,6 +67,7 @@ function coerceAssets(value: unknown): Asset[] {
 }
 
 async function readSession(sessionId: string): Promise<DemoSessionState | null> {
+  if (hasDatabaseEnv()) return readPostgresSession(sessionId);
   if (!hasBlobStore()) return null;
 
   try {
@@ -79,6 +90,74 @@ async function readSession(sessionId: string): Promise<DemoSessionState | null> 
   }
 }
 
+async function readPostgresSession(sessionId: string): Promise<DemoSessionState> {
+  const safeSessionId = normalizeDemoSessionId(sessionId);
+  return withPg(async (client) => {
+    await client.query(
+      `
+        insert into vc_os.demo_sessions (session_id, conversation_id, credits)
+        values ($1, $2, $3)
+        on conflict (session_id) do nothing
+      `,
+      [safeSessionId, `demo-${safeSessionId}`, 250],
+    );
+
+    const sessionResult = await client.query<{
+      session_id: string;
+      conversation_id: string;
+      credits: number;
+      messages: unknown;
+      updated_at: Date;
+    }>(
+      `
+        select session_id, conversation_id, credits, messages, updated_at
+        from vc_os.demo_sessions
+        where session_id = $1
+      `,
+      [safeSessionId],
+    );
+
+    const assetResult = await client.query<{
+      id: string;
+      conversation_id: string;
+      type: AssetType;
+      status: Asset["status"];
+      data: Record<string, unknown> | null;
+      credits_used: number;
+      created_at: Date;
+    }>(
+      `
+        select id, conversation_id, type, status, data, credits_used, created_at
+        from vc_os.demo_assets
+        where session_id = $1
+        order by created_at desc
+        limit 40
+      `,
+      [safeSessionId],
+    );
+
+    const row = sessionResult.rows[0];
+    return {
+      sessionId: safeSessionId,
+      conversationId: row.conversation_id,
+      credits: row.credits,
+      messages: coerceMessages(row.messages).slice(-80),
+      assets: assetResult.rows.map((asset) => ({
+        id: asset.id,
+        user_id: `demo-${safeSessionId}`,
+        conversation_id: asset.conversation_id,
+        type: asset.type,
+        status: asset.status,
+        file_url: `/api/demo-assets/${asset.id}`,
+        data: asset.data,
+        credits_used: asset.credits_used,
+        created_at: asset.created_at.toISOString(),
+      })),
+      updatedAt: row.updated_at.toISOString(),
+    };
+  });
+}
+
 export async function loadDemoSession(sessionId: string) {
   return (await readSession(sessionId)) || defaultSession(sessionId);
 }
@@ -92,6 +171,24 @@ export async function saveDemoSession(session: DemoSessionState) {
     assets: session.assets.slice(0, 40),
     updatedAt: new Date().toISOString(),
   };
+
+  if (hasDatabaseEnv()) {
+    await withPg(async (client) => {
+      await client.query(
+        `
+          insert into vc_os.demo_sessions (session_id, conversation_id, credits, messages, updated_at)
+          values ($1, $2, $3, $4::jsonb, now())
+          on conflict (session_id) do update set
+            conversation_id = excluded.conversation_id,
+            credits = excluded.credits,
+            messages = excluded.messages,
+            updated_at = now()
+        `,
+        [next.sessionId, next.conversationId, next.credits, JSON.stringify(next.messages)],
+      );
+    });
+    return next;
+  }
 
   if (!hasBlobStore()) return next;
 
@@ -160,7 +257,9 @@ export async function saveDemoAsset({
   const assetId = crypto.randomUUID();
   let downloadUrl = `data:${contentType};base64,${buffer.toString("base64")}`;
 
-  if (hasBlobStore()) {
+  if (hasDatabaseEnv()) {
+    downloadUrl = `/api/demo-assets/${assetId}`;
+  } else if (hasBlobStore()) {
     const blob = await put(assetPath(sessionId, assetId, type, extension), buffer, {
       access: "public",
       allowOverwrite: true,
@@ -189,6 +288,71 @@ export async function saveDemoAsset({
     assets: [asset, ...session.assets].slice(0, 40),
   };
 
-  await saveDemoSession(next);
+  if (hasDatabaseEnv()) {
+    await withPg(async (client) => {
+      await client.query("begin");
+      try {
+        await client.query(
+          `
+            insert into vc_os.demo_sessions (session_id, conversation_id, credits, messages, updated_at)
+            values ($1, $2, $3, $4::jsonb, now())
+            on conflict (session_id) do update set
+              credits = excluded.credits,
+              messages = excluded.messages,
+              updated_at = now()
+          `,
+          [next.sessionId, next.conversationId, next.credits, JSON.stringify(next.messages)],
+        );
+        await client.query(
+          `
+            insert into vc_os.demo_assets (
+              id, session_id, conversation_id, type, status, data,
+              credits_used, content_type, file_name, file_data, created_at
+            )
+            values ($1::uuid, $2, $3, $4, 'ready', $5::jsonb, $6, $7, $8, $9, now())
+          `,
+          [
+            assetId,
+            next.sessionId,
+            next.conversationId,
+            type,
+            JSON.stringify(data),
+            creditsUsed,
+            contentType,
+            `${assetLabel(type)}.${extension}`,
+            buffer,
+          ],
+        );
+        await client.query("commit");
+      } catch (error) {
+        await client.query("rollback");
+        throw error;
+      }
+    });
+  } else {
+    await saveDemoSession(next);
+  }
+
   return { asset, credits: next.credits, downloadUrl };
+}
+
+export async function getDemoAssetFile(assetId: string) {
+  if (!hasDatabaseEnv()) return null;
+
+  return withPg(async (client) => {
+    const result = await client.query<{
+      content_type: string;
+      file_name: string;
+      file_data: Buffer;
+    }>(
+      `
+        select content_type, file_name, file_data
+        from vc_os.demo_assets
+        where id = $1::uuid
+      `,
+      [assetId],
+    );
+
+    return result.rows[0] || null;
+  });
 }
