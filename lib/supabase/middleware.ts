@@ -1,8 +1,23 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 import { appConfig, hasSupabaseEnv } from "@/lib/config";
+import { DEMO_SESSION_COOKIE } from "@/lib/demo-cookie";
 
 export async function updateSession(request: NextRequest) {
+  if (appConfig.supabaseDisabled) {
+    const response = NextResponse.next({ request });
+    if (!request.cookies.get(DEMO_SESSION_COOKIE)?.value) {
+      response.cookies.set(DEMO_SESSION_COOKIE, crypto.randomUUID(), {
+        httpOnly: true,
+        maxAge: 60 * 60 * 24 * 30,
+        path: "/",
+        sameSite: "lax",
+        secure: process.env.NODE_ENV === "production",
+      });
+    }
+    return response;
+  }
+
   if (!hasSupabaseEnv()) {
     return NextResponse.next({ request });
   }

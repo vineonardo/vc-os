@@ -1,9 +1,12 @@
 import Link from "next/link";
+import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { logoutAction } from "@/app/(auth)/actions";
 import { CreditPurchase } from "@/components/credits/CreditPurchase";
 import { appConfig, hasSupabaseAdminEnv, hasSupabaseEnv } from "@/lib/config";
 import { getBalance } from "@/lib/credits";
+import { DEMO_SESSION_COOKIE } from "@/lib/demo-cookie";
+import { loadDemoSession } from "@/lib/demo-store";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { formatDate } from "@/lib/utils";
@@ -32,6 +35,10 @@ export default async function CreditsPage() {
       .limit(20);
     if (error) throw error;
     transactions = (data || []) as CreditTransaction[];
+  } else {
+    const demoSessionId = cookies().get(DEMO_SESSION_COOKIE)?.value || "shared-demo";
+    const demoSession = await loadDemoSession(demoSessionId);
+    balance = demoSession.credits;
   }
 
   return (

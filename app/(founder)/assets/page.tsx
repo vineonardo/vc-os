@@ -1,8 +1,11 @@
 import Link from "next/link";
+import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { Download, FileSpreadsheet, FileText, Presentation } from "lucide-react";
 import { logoutAction } from "@/app/(auth)/actions";
 import { hasSupabaseAdminEnv, hasSupabaseEnv } from "@/lib/config";
+import { DEMO_SESSION_COOKIE } from "@/lib/demo-cookie";
+import { loadDemoSession } from "@/lib/demo-store";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { formatDate } from "@/lib/utils";
@@ -24,7 +27,14 @@ const labelByType: Record<AssetType, string> = {
 
 export default async function AssetsPage() {
   if (!hasSupabaseEnv() || !hasSupabaseAdminEnv()) {
-    return <AssetsShell assets={[]} links={{}} />;
+    const demoSessionId = cookies().get(DEMO_SESSION_COOKIE)?.value || "shared-demo";
+    const demoSession = await loadDemoSession(demoSessionId);
+    const links = Object.fromEntries(
+      demoSession.assets
+        .filter((asset) => asset.file_url)
+        .map((asset) => [asset.id, asset.file_url as string]),
+    );
+    return <AssetsShell assets={demoSession.assets} links={links} />;
   }
 
   const supabase = createClient();

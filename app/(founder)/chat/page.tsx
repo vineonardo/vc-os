@@ -1,9 +1,12 @@
 import Link from "next/link";
+import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { logoutAction } from "@/app/(auth)/actions";
 import { ChatWindow } from "@/components/wolf/ChatWindow";
 import { hasSupabaseAdminEnv, hasSupabaseEnv } from "@/lib/config";
 import { getBalance } from "@/lib/credits";
+import { DEMO_SESSION_COOKIE } from "@/lib/demo-cookie";
+import { loadDemoSession } from "@/lib/demo-store";
 import { ensureProfile } from "@/lib/profile";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
@@ -22,14 +25,17 @@ const initialMessage: ChatMessage = {
 
 export default async function ChatPage() {
   if (!hasSupabaseEnv() || !hasSupabaseAdminEnv()) {
+    const demoSessionId = cookies().get(DEMO_SESSION_COOKIE)?.value || "shared-demo";
+    const demoSession = await loadDemoSession(demoSessionId);
+
     return (
       <>
         <DemoBanner />
         <ChatWindow
           userId="demo"
-          conversationId={null}
-          initialMessages={[initialMessage]}
-          initialCredits={10}
+          conversationId={demoSession.conversationId}
+          initialMessages={demoSession.messages.length ? demoSession.messages : [initialMessage]}
+          initialCredits={demoSession.credits}
         />
       </>
     );
@@ -111,7 +117,7 @@ function FounderLinks() {
 function DemoBanner() {
   return (
     <div className="fixed left-1/2 top-2 z-30 -translate-x-1/2 border border-amber/30 bg-amber/10 px-3 py-2 text-xs text-amber">
-      Live Wolf demo: X-Storm persistence is offline, so this session is not saved.
+      Demo mode: chat history, credits, and generated assets are saved for this browser.
     </div>
   );
 }

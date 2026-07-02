@@ -11,7 +11,7 @@ import writeXlsxFile, { type SheetData } from "write-excel-file/node";
 import { createOpenAI, getOpenAIModel } from "@/lib/openai";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { STRUCTURED_EXTRACTION_PROMPT } from "@/lib/wolf";
-import type { AssetType } from "@/types";
+import type { AssetType, ChatMessage } from "@/types";
 
 export type FounderData = {
   company_name: string;
@@ -221,8 +221,7 @@ async function getTranscript(userId: string) {
     .join("\n\n");
 }
 
-export async function extractFounderData(userId: string) {
-  const transcript = await getTranscript(userId);
+export async function extractFounderDataFromTranscript(transcript: string) {
   if (!transcript) return fallbackFounderData;
 
   const openai = createOpenAI();
@@ -238,6 +237,17 @@ export async function extractFounderData(userId: string) {
   return normalizeFounderData(
     JSON.parse(completion.choices[0]?.message.content || "{}") as Partial<FounderData>,
   );
+}
+
+export async function extractFounderDataFromMessages(messages: ChatMessage[]) {
+  const transcript = messages
+    .map((message) => `${message.role.toUpperCase()}: ${message.content}`)
+    .join("\n\n");
+  return extractFounderDataFromTranscript(transcript);
+}
+
+export async function extractFounderData(userId: string) {
+  return extractFounderDataFromTranscript(await getTranscript(userId));
 }
 
 function Footer({ slide }: { slide: string }) {

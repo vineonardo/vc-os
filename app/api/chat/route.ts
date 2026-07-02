@@ -2,6 +2,8 @@ import { NextRequest } from "next/server";
 import { CREDIT_COSTS } from "@/lib/constants";
 import { appConfig, hasSupabaseAdminEnv, hasSupabaseEnv } from "@/lib/config";
 import { deductCredits, getBalance } from "@/lib/credits";
+import { DEMO_SESSION_COOKIE } from "@/lib/demo-cookie";
+import { appendDemoExchange, loadDemoSession } from "@/lib/demo-store";
 import { createOpenAI, getOpenAIModel } from "@/lib/openai";
 import { maybeTriggerScore } from "@/lib/score";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -98,12 +100,23 @@ export async function POST(request: NextRequest) {
   if (!message) return Response.json({ error: "Message is required." }, { status: 400 });
 
   if (!hasSupabaseEnv() || !hasSupabaseAdminEnv()) {
+    const demoSessionId = request.cookies.get(DEMO_SESSION_COOKIE)?.value || "shared-demo";
+    const demoSession = await loadDemoSession(demoSessionId);
+    if (demoSession.credits < CREDIT_COSTS.CHAT_MESSAGE) {
+      return Response.json({ error: "Insufficient credits." }, { status: 402 });
+    }
+
     const stream = await streamWolfResponse({
       userId: "demo",
-      conversationId: null,
+      conversationId: demoSession.conversationId,
       message,
-      history: [],
-      persist: async () => 9,
+      history: demoSession.messages
+        .slice(-20)
+        .map((row) => ({ role: row.role as "user" | "assistant", content: row.content })),
+      persist: async (assistantContent) => {
+        const next = await appendDemoExchange(demoSessionId, message, assistantContent);
+        return next.credits;
+      },
     });
     return new Response(stream, {
       headers: {

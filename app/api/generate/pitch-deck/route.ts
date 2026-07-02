@@ -1,11 +1,15 @@
+import { cookies } from "next/headers";
 import { CREDIT_COSTS } from "@/lib/constants";
 import { hasSupabaseAdminEnv, hasSupabaseEnv } from "@/lib/config";
 import {
   createPitchDeckBuffer,
+  extractFounderDataFromMessages,
   extractFounderData,
   uploadAssetFile,
 } from "@/lib/assets";
 import { deductCredits, getBalance } from "@/lib/credits";
+import { DEMO_SESSION_COOKIE } from "@/lib/demo-cookie";
+import { loadDemoSession, saveDemoAsset } from "@/lib/demo-store";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 
@@ -13,7 +17,29 @@ export const runtime = "nodejs";
 
 export async function POST() {
   if (!hasSupabaseEnv() || !hasSupabaseAdminEnv()) {
-    return Response.json({ error: "Supabase env vars are required." }, { status: 500 });
+    const demoSessionId = cookies().get(DEMO_SESSION_COOKIE)?.value || "shared-demo";
+    const demoSession = await loadDemoSession(demoSessionId);
+    if (demoSession.credits < CREDIT_COSTS.PITCH_DECK) {
+      return Response.json({ error: "Insufficient credits." }, { status: 402 });
+    }
+
+    const data = await extractFounderDataFromMessages(demoSession.messages);
+    const buffer = await createPitchDeckBuffer(data);
+    const saved = await saveDemoAsset({
+      sessionId: demoSessionId,
+      type: "pitch_deck",
+      buffer,
+      extension: "pdf",
+      contentType: "application/pdf",
+      data: data as unknown as Record<string, unknown>,
+      creditsUsed: CREDIT_COSTS.PITCH_DECK,
+    });
+
+    return Response.json({
+      assetId: saved.asset.id,
+      downloadUrl: saved.downloadUrl,
+      credits: saved.credits,
+    });
   }
 
   const supabase = createClient();
